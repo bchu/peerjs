@@ -1157,7 +1157,8 @@ exports.RTCPeerConnection = window.mozRTCPeerConnection || window.webkitRTCPeerC
 /**
  * A peer who can initiate connections with other peers.
  */
-function Peer(id, options) {
+ //dependency injection -> socket = some other socket object conforming to interface defined in _init
+function Peer(id, options, socket) {
   if (id && id.constructor == Object) {
     options = id;
     id = undefined;
@@ -1168,8 +1169,6 @@ function Peer(id, options) {
 
   options = util.extend({
     debug: false,
-    host: '0.peerjs.com',
-    port: 9000,
     key: 'peerjs',
     config: { 'iceServers': [{ 'url': 'stun:stun.l.google.com:19302' }] }
   }, options);
@@ -1207,14 +1206,6 @@ function Peer(id, options) {
   }
 
   this._secure = util.isSecure();
-  // Errors for now because no support for SSL on cloud server.
-  if (this._secure && options.host === '0.peerjs.com') {
-    util.setZeroTimeout(function() {
-      self._abort('ssl-unavailable',
-        'The cloud server currently does not support HTTPS. Please run your own PeerServer to use HTTPS.');
-    });
-    return;
-  }
 
   // States.
   this.destroyed = false;
@@ -1231,12 +1222,12 @@ function Peer(id, options) {
   // Init immediately if ID is given, otherwise ask server for ID
   if (id) {
     this.id = id;
-    this._init();
+    this._init(socket);
   } else {
     this.id = null;
     this._retrieveId();
   }
-};
+}
 
 util.inherits(Peer, EventEmitter);
 
@@ -1254,7 +1245,7 @@ Peer.prototype._retrieveId = function(cb) {
       if (http.readyState === 4) {
         if (http.status !== 200) {
           throw 'Retrieve ID response not 200';
-          return;
+          // return;
         }
         self.id = http.responseText;
         self._init();
@@ -1267,9 +1258,15 @@ Peer.prototype._retrieveId = function(cb) {
 };
 
 
-Peer.prototype._init = function() {
+Peer.prototype._init = function(socket) {
   var self = this;
-  this._socket = new Socket(this._options.host, this._options.port, this._options.key, this.id);
+  if (!socket) {
+    this._socket = new Socket(this._options.host, this._options.port, this._options.key, this.id);
+  }
+  else {
+    this._socket = socket;
+    socket.emit('login', {key:this._options.key,id:this.id});
+  }
   this._socket.on('message', function(data) {
     self._handleServerJSONMessage(data);
   });
@@ -1277,13 +1274,19 @@ Peer.prototype._init = function() {
     util.log(error);
     self._abort('socket-error', error);
   });
-  this._socket.on('close', function() {
+  var msg = 'disconnect';
+  if (!socket) {
+    msg = 'close';
+  }
+  this._socket.on(msg, function() {
     var msg = 'Underlying socket has closed';
     util.log('error', msg);
     self._abort('socket-closed', msg);
   });
-  this._socket.start();
-}
+  if (!socket) {
+    this._socket.start();
+  }
+};
 
 
 Peer.prototype._handleServerJSONMessage = function(message) {
@@ -1468,7 +1471,13 @@ Peer.prototype.destroy = function() {
 Peer.prototype.disconnect = function() {
   if (!this.disconnected) {
     if (!!this._socket) {
-      this._socket.close();
+      var socket = this._socket;
+      if (socket instanceof Socket) {
+        this._socket.close();
+      }
+      else {
+        socket.disconnect();
+      }
     }
     this.id = null;
     this.disconnected = true;
@@ -1703,7 +1712,7 @@ function ConnectionManager(id, peer, socket, options) {
   if (!!this.id) {
     this.initialize();
   }
-};
+}
 
 util.inherits(ConnectionManager, EventEmitter);
 
@@ -1771,13 +1780,8 @@ ConnectionManager.prototype._setupIce = function() {
       self.close();
     }
   };
-  // Fallback for older Chrome impls.
-  this.pc.onicechange = function() {
-    if (!!self.pc && self.pc.iceConnectionState === 'disconnected') {
-      util.log('iceConnectionState is disconnected, closing connections to ' + this.peer);
-      self.close();
-    }
-  };
+  // Polyfill for older Chrome impls.
+  this.pc.onicechange = this.pc.oniceconnectionstatechange;
 };
 
 /** Set up onnegotiationneeded. */
@@ -1985,7 +1989,7 @@ ConnectionManager.prototype.connect = function(options) {
     this._queued.push(connection);
   }
 
-  this._lock = true
+  this._lock = true;
   return connection;
 };
 
