@@ -1265,7 +1265,6 @@ Peer.prototype._init = function(socket) {
   }
   else {
     this._socket = socket;
-    socket.emit('login', {key:this._options.key,id:this.id});
   }
   this._socket.on('message', function(data) {
     self._handleServerJSONMessage(data);
@@ -2019,13 +2018,13 @@ function Socket(host, port, key, id) {
   var wsProtocol = secure ? 'wss://' : 'ws://';
   this._httpUrl = protocol + host + ':' + port + '/' + key + '/' + id + '/' + token;
   this._wsUrl = wsProtocol + host + ':' + port + '/peerjs?key='+key+'&id='+id+'&token='+token;
-};
+}
 
 util.inherits(Socket, EventEmitter);
 
 
 /** Check in with ID or get one from server. */
-Socket.prototype.start = function() {  
+Socket.prototype.start = function() {
   this._startXhrStream();
   this._startWebSocket();
 };
@@ -2140,7 +2139,7 @@ Socket.prototype._setHTTPTimeout = function() {
     var old = self._http;
     if (!self._wsOpen()) {
       self._startXhrStream(old._streamIndex + 1);
-      self._http.old = old;        
+      self._http.old = old;
     } else {
       old.abort();
     }
