@@ -1267,6 +1267,7 @@ Peer.prototype._init = function(socket) {
     this._socket = socket;
   }
   this._socket.on('message', function(data) {
+    //WARNING: data is a string
     self._handleServerJSONMessage(data);
   });
   this._socket.on('error', function(error) {
@@ -1289,6 +1290,10 @@ Peer.prototype._init = function(socket) {
 
 
 Peer.prototype._handleServerJSONMessage = function(message) {
+  //socket.io
+  if (!this._socket._startXhrStream) {
+    message = JSON.parse(message);
+  }
   var peer = message.src;
   var manager = this.managers[peer];
   var payload = message.payload;
@@ -1304,12 +1309,12 @@ Peer.prototype._handleServerJSONMessage = function(message) {
       this._abort('unavailable-id', 'ID `'+this.id+'` is taken');
       break;
     case 'OFFER':
+      //metadata is contained inside payload.labels
       var options = {
         sdp: payload.sdp,
         labels: payload.labels,
         config: this._options.config
       };
-
       var manager = this.managers[peer];
       if (!manager) {
         manager = new ConnectionManager(this.id, peer, this._socket, options);
@@ -1526,7 +1531,7 @@ function DataConnection(peer, dc, options) {
   if (!!this._dc) {
     this._configureDataChannel();
   }
-};
+}
 
 util.inherits(DataConnection, EventEmitter);
 
@@ -1680,6 +1685,18 @@ DataConnection.prototype.getPeer = function() {
  * Manages DataConnections between its peer and one other peer.
  * Internally, manages PeerConnection.
  */
+
+var socketSwitch = function(socket,msg) {
+  //PeerJS socket
+  if (socket._startXhrStream) {
+    socket.send(msg);
+  }
+  //socket.io
+  else {
+    socket.emit('nodetron',msg);
+  }
+};
+
 function ConnectionManager(id, peer, socket, options) {
   if (!(this instanceof ConnectionManager)) return new ConnectionManager(id, peer, socket, options);
   EventEmitter.call(this);
@@ -1764,7 +1781,7 @@ ConnectionManager.prototype._setupIce = function() {
   this.pc.onicecandidate = function(evt) {
     if (evt.candidate) {
       util.log('Received ICE candidates.');
-      self._socket.send({
+      socketSwitch(self._socket,{
         type: 'CANDIDATE',
         payload: {
           candidate: evt.candidate
@@ -1824,7 +1841,7 @@ ConnectionManager.prototype._makeOffer = function() {
 
     self.pc.setLocalDescription(offer, function() {
       util.log('Set localDescription to offer');
-      self._socket.send({
+      socketSwitch(self._socket,{
         type: 'OFFER',
         payload: {
           sdp: offer,
@@ -1854,7 +1871,7 @@ ConnectionManager.prototype._makeAnswer = function() {
 
     self.pc.setLocalDescription(answer, function() {
       util.log('Set localDescription to answer.');
-      self._socket.send({
+      socketSwitch(self._socket, {
         type: 'ANSWER',
         payload: {
           sdp: answer
@@ -1880,7 +1897,7 @@ ConnectionManager.prototype._cleanup = function() {
   }
 
   var self = this;
-  this._socket.send({
+  socketSwitch(this._socket,{
     type: 'LEAVE',
     dst: self.peer
   });
@@ -1970,6 +1987,7 @@ ConnectionManager.prototype.connect = function(options) {
     this._default += 1;
   }
 
+  //metadata is attached to payload here:
   this.labels[options.label] = options;
 
   var dc;
